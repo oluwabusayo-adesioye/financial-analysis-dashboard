@@ -14,9 +14,12 @@ st.title("Live Market Research Dashboard")
 st.sidebar.header("Configuration")
 ticker = st.sidebar.text_input("Enter a stock ticker (eg AAPL, MSFT, TSLA):", value="AAPL")
 
-#Add date/interval control
+#date/interval control
 period = st.sidebar.selectbox("Select data period:", ["7d", "1mo", "3mo", "6mo", "1y"], index=2)
 interval = st.sidebar.selectbox("Select interval:", ["15m", "1h", "1d"], index=1)
+
+#debug mode toggle
+debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=False)
 
 first_ticker = ticker.split()[0]
 
@@ -31,7 +34,52 @@ data = load_data(first_ticker, period, interval)
 if isinstance(data.columns, pd.MultiIndex):
     data.columns = [col[0] for col in data.columns]
 
-#Create dashboard tabs
+#functions to make the code scalable
+def annualization_factor(interval):
+    """Return appropriate square root factor for volatility annualization."""
+    if interval in ["1m", "5m", "15m", "30m", "1h"]:
+        return np.sqrt(252 * 6.5)
+    elif interval == "1d":
+        return np.sqrt(252)
+    elif interval == "1wk":
+        return np.sqrt(52)
+    elif interval == "1mo":
+        return np.sqrt(12)
+    else:
+        return np.sqrt(252)
+
+def moving_average_windows(interval):
+    """Return short-term (50-day) and long-term (200-day) equivalent windows."""
+    if interval in ["1m", "5m", "15m", "30m", "1h"]:
+        return 50 * 6.5, 200 * 6.5 
+    elif interval == "1d":
+        return 50, 200
+    elif interval == "1wk":
+        return 10, 40
+    else:
+        return 6, 12
+
+def bollinger_window(interval):
+    """Return rolling window equivalent to 20 days."""
+    if interval in ["1m", "5m", "15m", "30m", "1h"]:
+        return 20 * 6.5
+    elif interval == "1d":
+        return 20
+    elif interval == "1wk":
+        return 4
+    else:
+        return 6
+
+#debug info display
+if debug_mode:
+    st.sidebar.subheader("Debug Information")
+    st.sidebar.write(f"**Ticker:** {first_ticker}")
+    st.sidebar.write(f"**Period:** {period}")
+    st.sidebar.write(f"**Interval:** {interval}")
+    st.sidebar.write(f"**Data Shape:** {data.shape}")
+    st.sidebar.write("**Columns:**", list(data.columns))
+
+#dashboard tabs
 tab1, tab2, tab3, tab4 = st.tabs(["Overview", "Volatility", "Technical Indicators", "Benchmark"])
 
 with tab1:
@@ -41,10 +89,19 @@ with tab1:
     
     #calculate returns, annualized volatility and moving avaerages
     data['Returns'] = data['Close'].pct_change()
-    data['Rolling Volatility'] = data['Returns'].rolling(window=50).std() * (1638**0.5)
-    data['MA_50'] = data['Close'].rolling(window=325).mean()
-    data['MA_200'] = data['Close'].rolling(window=1300).mean()
-    
+    ann_factor = annualization_factor(interval)
+    short_window, long_window = moving_average_windows(interval)
+    data['Rolling Volatility'] = data['Returns'].rolling(window=int(short_window)).std() * ann_factor
+    data['MA_50'] = data['Close'].rolling(int(short_window)).mean()
+    data['MA_200'] = data['Close'].rolling(int(long_window)).mean()
+
+    #debug insight
+    if debug_mode:
+        st.write("### Debug Data Snapshot")
+        st.write(data[['Returns', 'Rolling Volatility', 'MA_50', 'MA_200']].head(10))
+        st.write(f"Annualization Factor: {ann_factor}")
+        st.write(f"Short Window: {short_window}, Long Window: {long_window}")
+        
     #display metrics
     st.subheader("Key Market Indicators")
     
@@ -82,10 +139,14 @@ with tab3:
     
     #bollinger bands
     st.subheader("Bollinger Bands")
-    data['MA_20'] = data['Close'].rolling(window=20).mean()
-    data['Upper_Band'] = data['MA_20'] + (data['Close'].rolling(window=20).std() * 2)
-    data['Lower_Band'] = data['MA_20'] - (data['Close'].rolling(window=20).std() * 2)
-    
+    bb_window = int(bollinger_window(interval))
+    data['MA_20'] = data['Close'].rolling(window=bb_window).mean()
+    data['Upper_Band'] = data['MA_20'] + (data['Close'].rolling(window=bb_window).std() * 2)
+    data['Lower_Band'] = data['MA_20'] - (data['Close'].rolling(window=bb_window).std() * 2)
+
+    if debug_mode:
+        st.write(f"Bollinger Window: {bb_window}")
+        
     #plot BB with altair
     date_col_name = data.index.name
     plot_data = data[['Close', 'MA_20', 'Upper_Band', 'Lower_Band']].reset_index() # First, get the date from the index into a column
@@ -112,7 +173,10 @@ with tab3:
     data['MACD'] = short_runner - long_runner
     data['Signal_Line'] = data['MACD'].ewm(span=9, adjust=False).mean()
     data['Histogram'] = data['MACD'] - data['Signal_Line']
-    
+
+    if debug_mode:
+        st.write(data[['MACD', 'Signal_Line', 'Histogram']].tail(5))
+        
     #plot MACD
     date_col_name_macd = data.index.name
     plot_data_macd = data.reset_index()
@@ -162,7 +226,16 @@ with tab4:
     #put both return columns into one df for comparison and plotting
     comparison = pd.DataFrame({f"{first_ticker} Return": data["Return"], "S&P 500 Return": benchmark_data["Return"]}).dropna()
     
-    st.line_chart(comparison)
+    comparison = comparison * 100
+
+    #plot with plotly
+    fig_benchmark = px.line(comparison,
+                  title=f"{first_ticker} vs S&P 500 - Percentage Returns",
+                  labels={"value": "Return (%)", "index": "Date"}
+                 )
+    fig_benchmark.update_yaxes(tickformat=".2f", title="Return (%)")
+    fig_benchmark.update_traces(hovertemplate="%{y:.2f}%")
+    st.plotly_chart(fig_benchmark, use_container_width=True)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("**Developed by Oluwabusayo Adesioye**")
