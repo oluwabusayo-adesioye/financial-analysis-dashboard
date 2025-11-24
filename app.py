@@ -12,7 +12,38 @@ st.title("Live Market Research Dashboard")
 
 #User input section
 st.sidebar.header("Configuration")
-ticker = st.sidebar.text_input("Enter a stock ticker (eg AAPL, MSFT, TSLA):", value="AAPL")
+
+#ticker selection
+st.sidebar.subheader("Select Stock Ticker")
+
+#default ticker
+default_ticker = "AAPL"
+
+#Popular tickers list
+popular_tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "TSLA", "META", "NVDA", "NFLX", "JPM", "V", "MA", "KO", "PEP", "WMT", "DIS", "XOM", "NKE", "AMD", "INTC", "BA", "UBER", "PYPL"]
+
+#Dropdown for common tickers
+dropdown_ticker = st.sidebar.selectbox("Pick a popular ticker (optional):",
+    [""] + popular_tickers,
+    help="Choose from popular stocks, or leave blank to type your own.")
+
+#Manual input for any ticker
+manual_ticker = st.sidebar.text_input("Or type any ticker symbol:",
+    help="Enter any valid ticker")
+
+#Auto Mode Logic
+if manual_ticker.strip():  
+    #Manual input overrides dropdown
+    first_ticker = manual_ticker.strip().upper()
+elif dropdown_ticker:
+    #Dropdown used if selected
+    first_ticker = dropdown_ticker
+else:
+    #Auto fallback to default if nothing selected
+    first_ticker = default_ticker
+
+#Display selection
+st.sidebar.success(f"Using ticker: **{first_ticker}**")
 
 #date/interval control
 period = st.sidebar.selectbox("Select data period:", ["7d", "1mo", "3mo", "6mo", "1y"], index=2)
@@ -20,8 +51,6 @@ interval = st.sidebar.selectbox("Select interval:", ["15m", "1h", "1d"], index=1
 
 #debug mode toggle
 debug_mode = st.sidebar.checkbox("Enable Debug Mode", value=False)
-
-first_ticker = ticker.split()[0]
 
 #data download
 @st.cache_data
@@ -113,7 +142,7 @@ with tab1:
     #Visualisation
     st.subheader("Price Trend with Moving Averages")
     
-    fig = px.line(data, y=['Close', 'MA_50', 'MA_200'], title=f"{ticker} Price Trend")
+    fig = px.line(data, y=['Close', 'MA_50', 'MA_200'], title=f"{first_ticker} Price Trend")
     st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
@@ -222,16 +251,20 @@ with tab4:
     #returns for both chosen stock and s&p
     data["Return"] = data["Close"].pct_change()
     benchmark_data["Return"] = benchmark_data["Close"].pct_change()
+
+    #convert to cumulative returns with (1 + returns).cumprod() - 1
+    data["Cumulative Return"] = (1 + data["Return"]).cumprod() - 1
+    benchmark_data["Cumulative Return"] = (1 + benchmark_data["Return"]).cumprod() - 1
     
-    #put both return columns into one df for comparison and plotting
-    comparison = pd.DataFrame({f"{first_ticker} Return": data["Return"], "S&P 500 Return": benchmark_data["Return"]}).dropna()
+    #put both cumulative return columns into one df for comparison and plotting
+    comparison = pd.DataFrame({f"{first_ticker} Cumulative Return": data["Cumulative Return"], "S&P 500 Cumulative Return": benchmark_data["Cumulative Return"]}).dropna()
     
     comparison = comparison * 100
 
     #plot with plotly
     fig_benchmark = px.line(comparison,
-                  title=f"{first_ticker} vs S&P 500 - Percentage Returns",
-                  labels={"value": "Return (%)", "index": "Date"}
+                  title=f"{first_ticker} vs S&P 500 - Cumulative Returns (%)",
+                  labels={"value": "Cumulative Return (%)", "index": "Date"}
                  )
     fig_benchmark.update_yaxes(tickformat=".2f", title="Return (%)")
     fig_benchmark.update_traces(hovertemplate="%{y:.2f}%")
